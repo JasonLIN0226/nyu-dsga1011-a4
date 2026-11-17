@@ -1,0 +1,17 @@
+{
+  "finetune": true,
+  "optimizer_type": "AdamW",
+  "learning_rate": 0.0003,
+  "weight_decay": 0.01,
+  "scheduler_type": "linear",
+  "num_warmup_epochs": 1,
+  "max_n_epochs": 30,
+  "patience_epochs": 5,
+  "use_wandb": false,
+  "experiment_name": "experiment",
+  "batch_size": 8,
+  "test_batch_size": 8,
+  "seed": 42,
+  "num_beams": 1,
+  "dev_beam_candidates": [1, 4]
+}

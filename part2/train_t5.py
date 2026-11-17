@@ -140,14 +140,90 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     '''
     # TODO
     model.eval()
-    return 0, 0, 0, 0, 0
+
+    total_loss = 0
+    total_tokens = 0
+    tokenizer = dev_loader.dataset.tokenizer
+    predicted_queries = []
+    criterion = nn.CrossEntropyLoss(reduction="sum")
+
+    with torch.no_grad():
+        for encoder_ids, encoder_mask, decoder_inputs, targets, initial_ids in tqdm(dev_loader):
+            encoder_ids = encoder_ids.to(DEVICE)
+            encoder_mask = encoder_mask.to(DEVICE)
+            decoder_inputs = decoder_inputs.to(DEVICE)
+            targets = targets.to(DEVICE)
+
+            logits = model(
+                input_ids=encoder_ids,
+                attention_mask=encoder_mask,
+                decoder_input_ids=decoder_inputs,
+            ).logits
+
+            valid = targets != PAD_IDX
+            loss = criterion(logits[valid], targets[valid])
+
+            total_loss += loss.item()
+            total_tokens += valid.sum().item()
+
+            generated_ids = model.generate(
+                input_ids=encoder_ids,
+                attention_mask=encoder_mask,
+                decoder_start_token_id=dev_loader.dataset.bos_id,
+                decoder_input_ids=initial_ids.to(DEVICE),
+                max_new_tokens=1024,
+                num_beams=getattr(args, "num_beams", 1),
+                do_sample=False,
+            )
+
+            queries = tokenizer.batch_decode(
+                generated_ids,
+                skip_special_tokens=True,
+            )
+            predicted_queries.extend(queries)
+
+    eval_loss = total_loss / total_tokens
+
+    predicted_queries = [q.replace("\n", " ").strip() for q in predicted_queries]
+    save_queries_and_records(
+        predicted_queries, model_sql_path, model_record_path
+    )
+
+    sql_em, record_em, f1, errors = compute_metrics(
+        gt_sql_pth, model_sql_path, gt_record_path, model_record_path
+    )
+    error_rate = sum(bool(e) for e in errors) / len(errors)
+
+    return eval_loss, f1, record_em, sql_em, error_rate
         
 def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     '''
     You must implement inference to compute your model's generated SQL queries and its associated 
     database records. Implementation should be very similar to eval_epoch.
     '''
-    pass
+    model.eval()
+    tokenizer = test_loader.dataset.tokenizer
+    queries = []
+
+    with torch.no_grad():
+        for batch in tqdm(test_loader):
+            ids, mask, bos = [x.to(DEVICE) for x in batch]
+
+            generated = model.generate(
+                input_ids=ids,
+                attention_mask=mask,
+                decoder_input_ids=bos,
+                decoder_start_token_id=test_loader.dataset.bos_id,
+                max_new_tokens=1024,
+                num_beams=getattr(args, "num_beams", 1),
+                do_sample=False,
+            )
+            queries.extend(tokenizer.batch_decode(
+                generated, skip_special_tokens=True
+            ))
+
+    queries = [q.replace("\n", " ").strip() for q in queries]
+    save_queries_and_records(queries, model_sql_path, model_record_path)
 
 def main():
     # Get key arguments
